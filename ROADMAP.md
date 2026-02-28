@@ -1,94 +1,113 @@
-# ROADMAP — Phase plan
+# ROADMAP — Setlist micro-catalog + CoreML offline plan
 
-This roadmap is structured to de-risk the project by locking down **evaluation** and **data** before investing heavily in modeling.
+This roadmap reflects the current product architecture:
 
-## Phase 0 — Baseline benchmark (2–7 days)
+- **On-device, offline iOS (CoreML)**
+- **Setlist-based micro-catalog** (20–50 tracks)
+- **VEEP concert MP4s** as real degraded ground truth
 
-**Goal:** quantify the gap.
+---
 
-- Build simulation pipeline MVP (enough to produce noisy/reverbed/clipped queries).
-- Run `experiments/baseline_shazam_eval.md`.
+## Phase 0 — Baseline benchmark (unchanged)
 
-Deliverables:
+**Goal:** quantify the gap and lock evaluation.
 
-- baseline report: accuracy vs SNR/RT60 for ShazamKit, ACRCloud, Chromaprint
-- dataset manifest + reproducible scripts (even if rough)
+- Build simulation pipeline MVP (noisy/reverbed/clipped queries)
+- Evaluate baselines in a **micro-catalog** setting (same setlist constraint):
+  - Chromaprint/Echoprint (open)
+  - ShazamKit (black box)
 
-## Phase 1 — Dataset construction pipeline (1–2 weeks)
+**Deliverables**
+- accuracy vs SNR/RT60
+- streaming time-to-recognition
+- reproducible scripts + dataset manifests
 
-**Goal:** scalable, reproducible training/eval dataset.
+---
 
-- Curate crowd noise sources (FreeSound IDs + licenses).
-- Curate RIRs or implement synthetic RIR generation.
-- Implement augmentation pipeline with config files.
-- Split into train/val/test with track-level separation.
+## Phase 1 — VEEP pipeline (extract + label concert audio)
 
-Deliverables:
+**Goal:** turn concert MP4 downloads into labeled training/eval data.
 
-- `dataset/` manifest + generation scripts
-- fixed evaluation suite for regression testing
+- ffmpeg extraction to standardized WAV
+- setlist alignment to get song timestamps
+- human-in-the-loop tool to correct boundaries
 
-## Phase 2 — First embedding model (CNN baseline) (1–2 weeks)
+**Deliverables**
+- `veep/` pipeline scripts
+- labeled dataset format + examples
+- first VEEP-based evaluation suite
 
-**Goal:** working end-to-end retrieval.
+---
 
-- Implement CNN encoder.
-- Train with triplet or contrastive loss.
-- Build FAISS index for segment embeddings.
+## Phase 2 — Train embedding model on clean vs VEEP-degraded pairs
 
-Deliverables:
+**Goal:** learn invariances from real degradation.
 
-- training scripts + checkpoints
-- evaluation results vs baselines
+- start from pretrained backbone (PANNs/OpenL3/MusiCNN)
+- train with contrastive objective
+- mine hard negatives within setlists
 
-## Phase 3 — Iterate (transformer, better augmentation) (2–4 weeks)
+**Deliverables**
+- training code + checkpoints
+- retrieval metrics on VEEP holdout concerts
 
-**Goal:** close the gap under harsh conditions.
+---
 
-- Upgrade model to AST or hybrid conv-transformer.
-- Add hard-negative mining.
-- Add enhancement module ablations (RNNoise/Demucs).
+## Phase 3 — CoreML conversion + on-device inference test
 
-Deliverables:
+**Goal:** validate deployment feasibility and performance.
 
-- improved accuracy at SNR 0 / -5 dB
-- latency/throughput profiling
+- convert PyTorch → ONNX → CoreML
+- benchmark on target device class (e.g., iPhone 15 Pro)
+- verify numerical stability (ranking agreement)
 
-## Phase 4 — Real-time inference pipeline (1–3 weeks)
+**Deliverables**
+- CoreML model package
+- latency/energy report
+- on-device streaming prototype
 
-**Goal:** streaming recognition <5s.
+---
 
-- Overlapping window inference.
-- Temporal aggregation + confidence scoring.
-- FAISS index packaging/loading.
+## Phase 4 — Pre-concert pipeline (setlist → micro-catalog → CoreML package)
 
-Deliverables:
+**Goal:** generate a small offline “concert pack”.
 
-- demo CLI or service
-- stable recognition behavior in long streams
+- setlist ingestion
+- clean audio fetch + normalization
+- optional acoustic simulation (RIR/EQ)
+- reference embedding generation
+- micro-index packaging (SQLite/flat) + signing
 
-## Phase 5 — Field test at real concerts (ongoing)
+**Deliverables**
+- micro-catalog builder tool
+- concert pack format spec
+- end-to-end demo: build pack → run offline recognition
 
-**Goal:** validate in the real world.
+---
 
-- Define recording protocol: devices, distances, venues.
-- Collect labeled snippets (with timestamps/setlists if possible).
-- Measure accuracy/latency and iterate.
+## Phase 5 — Field test at a real concert
 
-Deliverables:
+**Goal:** validate end-to-end in the wild.
 
-- field test report
-- failure analysis with actionable fixes
+- run with known setlist
+- measure recognition stability and time-to-recognition
+- capture failure modes for next training iteration
 
-## Phase 6 — AUGE iOS integration spec (1–2 weeks)
+**Deliverables**
+- field test report + error analysis
+- prioritized fixes
 
-**Goal:** integration path.
+---
 
-- Decide deployment: on-device vs hybrid.
-- Define model format (CoreML), index format, update mechanism.
-- Privacy constraints: ephemeral audio, on-device processing preferred.
+## Phase 6 — AUGE iOS integration (replace ShazamKit with Resonance)
 
-Deliverables:
+**Goal:** ship inside the AUGE app.
 
-- integration spec doc (API, UX, performance)
-- risk register (battery, privacy, latency)
+- replace ShazamKit flow
+- implement setlist download + concert pack distribution
+- privacy model (on-device first; optional opt-in data collection)
+
+**Deliverables**
+- iOS integration spec + APIs
+- production performance targets
+- rollout plan

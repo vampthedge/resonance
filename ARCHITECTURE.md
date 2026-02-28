@@ -1,136 +1,155 @@
-# ARCHITECTURE — Proposed system design
+# ARCHITECTURE — Setlist-based, on-device concert song recognition (CoreML)
 
-Goal: **recognize songs from live concert audio** in <5 seconds, under 80 dB+ crowd noise, reverberant venues, PA coloration, and phone mic distortion.
+Resonance is an audio recognition system optimized for **live concerts** where the catalog is known **ahead of time** (the setlist). Instead of competing with internet-scale fingerprinting, we build a **micro-catalog** (20–50 tracks) and run **fully offline on iOS** using **CoreML**.
 
-## 1) End-to-end pipeline
+## Design principles
 
-### 1.1 Streaming ingest
+- **Micro-catalog retrieval beats global search**: With 20–50 candidates, we can use stronger learned embeddings + consistency logic and get higher accuracy under heavy degradation.
+- **Offline-first (CoreML)**: At-concert recognition must work with no network and low latency.
+- **IP moat is the packaging + simulation pipeline**: The “secret sauce” is how we (a) simulate venue/channel effects pre-show, and (b) package a tiny, fast, CoreML-compatible catalog + index.
 
-- Input: phone microphone PCM stream (16 kHz or 32 kHz recommended; 16 kHz is sufficient for ID but may lose some high-frequency cues).
-- Chunking: 20–40 ms frames for feature extraction; aggregate into overlapping windows.
+---
 
-### 1.2 Optional enhancement (denoise / dereverb)
+## 1) Two pipelines: pre-concert build vs at-concert inference
 
-Two options depending on latency/compute budget:
+### 1.1 Pre-concert pipeline (before the show)
 
-- **RNNoise**: low-latency noise suppression.
-- **Demucs (or similar)**: heavier, potentially better separation but introduces artifacts.
+Runs on device or on a server *before* the concert. Output is a small bundle (<10MB typical) containing:
+- CoreML embedding model (or version reference)
+- micro-catalog metadata
+- reference embeddings (+ optional per-track/per-segment embeddings)
+- an index optimized for fast cosine similarity search
 
-Important: treat enhancement as **a module to evaluate**, not an assumption. If enhancement hurts embeddings, remove it and rely on training augmentations.
+Steps:
 
-### 1.3 Feature extraction
+1. **Input: setlist**
+   - Song titles + artists (typically 20–50 songs)
+   - Optionally include alternate versions / live edits if known
 
-- STFT → mel filterbank → log-mel spectrogram
-- Typical config (starting point):
-  - sample rate: 16 kHz
-  - window length: 25 ms
-  - hop: 10 ms
-  - mel bins: 64 or 96
-  - normalization: per-window mean/var
+2. **Fetch clean studio audio**
+   - Apple Music / YouTube Music APIs, or user-provided local files
+   - Normalize sample rate and loudness
 
-### 1.4 Embedding encoder
+3. **Optionally simulate venue acoustics**
+   - Apply the expected venue’s **room impulse response (RIR)** if known
+   - Apply PA/mic coloration profiles (EQ curves), compression, mild clipping
+   - Goal: generate “concert-like” reference views that match what the phone hears
 
-Two candidate model families:
+4. **Embed reference audio**
+   - Window audio into ~3s segments (50% overlap)
+   - log-mel frontend → embedding model → L2-normalized vectors
 
-- **CNN encoder** (fast baseline): EfficientNet-like blocks or a ResNet-ish spectrogram CNN.
-- **Transformer encoder** (stronger, heavier): **AST — Audio Spectrogram Transformer** (Gong et al., 2021).
+5. **Pack to CoreML-compatible embedding index**
+   - Store embeddings + metadata in a compact format:
+     - SQLite (fast lookup, simple updates) **or**
+     - flat binary file (minimal overhead)
+   - Index can be brute-force cosine over <=50 tracks, or precomputed matrices for SIMD/ANE-friendly ops
 
-Output:
+6. **Bundle onto device**
+   - Deliver as an encrypted/signed “concert pack”
+   - Includes setlist metadata for UI (track names, artists, artwork pointers)
 
-- embedding dimension \(d\) (e.g., 128–512)
-- L2-normalize embeddings to enable cosine similarity.
+### 1.2 At-concert inference pipeline (during the show, offline)
 
-Training objective: triplet loss or NT-Xent / supervised contrastive (see TRAINING.md).
+Runs entirely on-device with strict latency constraints.
 
-### 1.5 Retrieval index
+1. **Mic input**
+   - Continuous audio capture
 
-- Use **FAISS** Approximate Nearest Neighbor index.
-- Reference: precompute embeddings for a catalog of tracks.
+2. **Noise suppression (CoreML)**
+   - RNNoise-style low-latency suppression **or** Demucs-lite (if feasible)
+   - Treated as an ablation: keep only if it improves end-to-end recognition
 
-Design choice (critical):
+3. **Log-mel spectrogram**
+   - Sliding windows: **3.0s** window, **50% overlap** (hop = 1.5s)
+   - Per-window normalization
 
-- **Segment-level indexing:** embed many short windows per track (e.g., every 0.5s). Pros: robust to partial queries. Cons: larger index.
-- **Track-level indexing:** single embedding per track (requires pooling). Pros: smaller index. Cons: may lose temporal specificity.
+4. **Embedding model (CoreML)**
+   - CNN / MobileNet-style spectrogram encoder
+   - Output: L2-normalized embedding (e.g., 128–256 dims)
 
-Recommendation: start with **segment-level** in Phase 2–4 for best accuracy.
+5. **Similarity search against micro-catalog**
+   - Cosine similarity against reference embeddings
+   - With a micro-catalog, we can do exact search cheaply and deterministically
 
-### 1.6 Decision logic (confidence + temporal consistency)
+6. **Temporal consistency gate (anti-flicker)**
+   - Require **2 of the last 3** consecutive windows to agree on the same song
+   - Optionally enforce similarity margin vs runner-up and a minimum confidence threshold
 
-Single-window nearest neighbor is not enough under heavy noise. We require:
+7. **Output**
+   - Matched song + confidence + timestamp (and optional offset estimate)
 
-- similarity threshold: cosine >= τ
-- **temporal consistency** over N consecutive overlapping windows:
-  - same predicted track ID for ≥K of N
-  - consistent offset drift within tolerance
+---
 
-We also maintain a short rolling buffer (e.g., last 5 seconds) to compute a stable decision.
-
-## 2) ASCII diagram
+## 2) ASCII architecture diagram
 
 ```
-  Microphone stream
-        |
-        v
-  [PCM frames]
-        |
-        v
-  Optional enhancement
-  (RNNoise / Demucs)
-        |
-        v
-  log-mel spectrogram
-        |
-        v
-  Embedding encoder f(.)  --->  e_t in R^d (L2-normalized)
-        |
-        +------------------------------+
-                                       |
-                                       v
-                               FAISS ANN search
-                               (segment embeddings)
-                                       |
-                                       v
-                        Top-k candidates + similarities
-                                       |
-                                       v
-                         Temporal aggregator / voting
-                    (consistency across overlapping windows)
-                                       |
-                                       v
-                           Predicted track + confidence
+                 ┌──────────────────────────────────────────────────────┐
+                 │                 PRE-CONCERT (build)                   │
+                 └──────────────────────────────────────────────────────┘
+
+   Setlist (20–50)      Clean audio fetch         Optional acoustics sim
+ (title+artist) ───▶ (Apple/YouTube/local) ───▶ (RIR + EQ + comp + clip)
+         │                      │                           │
+         v                      v                           v
+  track metadata        normalized audio                simulated views
+         │                      │                           │
+         └───────────────┬──────┴───────────────┬───────────┘
+                         v                      v
+                 log-mel windows         log-mel windows
+                         │                      │
+                         v                      v
+                CoreML embedding model   CoreML embedding model
+                         │                      │
+                         └───────────────┬──────┘
+                                         v
+                            reference embeddings (L2)
+                                         │
+                                         v
+                 CoreML-compatible micro-index (SQLite/flat)
+                                         │
+                                         v
+                           "Concert Pack" bundled to iPhone
+
+
+                 ┌──────────────────────────────────────────────────────┐
+                 │              AT-CONCERT (offline inference)           │
+                 └──────────────────────────────────────────────────────┘
+
+   iPhone mic ─▶ RNNoise/Demucs-lite ─▶ log-mel (3s, 50% overlap) ─▶ CoreML
+                                                                    embed
+                                                                      │
+                                                                      v
+                                                    cosine similarity vs
+                                                    micro-catalog index
+                                                                      │
+                                                                      v
+                                             temporal consistency (2/3)
+                                                                      │
+                                                                      v
+                                               song + confidence + time
 ```
 
-## 3) Latency budget (<5s)
+---
 
-Target: recognition within **5 seconds** end-to-end.
+## 3) What changes vs Shazam-style global fingerprinting
 
-Suggested operating point:
+- We **do not** need internet-scale indexing, collision handling, or global uniqueness.
+- The task becomes **robust retrieval within a tiny candidate set** under severe degradation.
+- The system can afford stronger invariances (learned embeddings, simulation alignment) because the compute and memory budget is small.
 
-- window length: 2.0s
-- hop: 0.5s
-- decision: require 3 consistent windows (≈ 3.0s of audio after warmup)
+---
 
-Compute budget considerations:
+## 4) IP moat (why this is hard to copy)
 
-- Feature extraction: CPU ok.
-- CNN encoder: feasible on mobile CPU/NN accelerator.
-- AST: may require on-device NN accelerator or server-side.
+The defensibility is not “a better embedding model” alone.
 
-## 4) Interfaces & modules
+Our moat is the **pre-concert build system**:
+- **Acoustic simulation & adaptation**: generating reference embeddings that match the expected venue and device channel.
+- **CoreML packaging**: shipping a compact, fast, offline-ready index + model bundle.
+- **Setlist constraint**: problem reframing that enables higher accuracy and better UX.
 
-- `audio_io`: streaming capture + resampling
-- `frontend`: STFT/mel/log + normalization
-- `enhancement`: RNNoise/Demucs wrappers
-- `model`: encoder inference (PyTorch / ONNX / CoreML)
-- `index`: FAISS build/load/query
-- `matcher`: temporal aggregation + confidence
-
-## 5) Failure modes to explicitly test
-
-- SNR below 0 dB
-- heavy clipping
-- long RT60 (reverb)
-- crowd chants with tonal components
-- strong bass boosting by PA
-
-These should be part of the evaluation suite to avoid “lab wins” that don’t generalize.
+A competitor without our data (VEEP live recordings) and without our packaging pipeline would have to rebuild:
+- venue/channel simulation heuristics and RIR library
+- on-device index format and update distribution
+- end-to-end tuning for temporal stability in real concerts

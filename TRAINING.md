@@ -1,151 +1,146 @@
-# TRAINING — Data, objectives, augmentation, evaluation
+# TRAINING — Data, objectives, and the VEEP-driven flywheel
 
-This document specifies how to build a training pipeline for **concert-robust song embeddings**.
+This document defines how we train an embedding model that is robust to **real concert audio** and deployable **on-device via CoreML**.
+
+---
 
 ## 1) Problem formulation
 
 We learn an embedding model \( f_\theta \) that maps an audio window \(x\) to an embedding \(e\in\mathbb{R}^d\) such that:
 
-- same track → embeddings close
-- different tracks → embeddings far
+- same song (same underlying recording) → embeddings close
+- different songs → embeddings far
 
-At inference, we do ANN retrieval against a catalog of reference embeddings.
-
-## 2) Data strategy
-
-### 2.1 Base corpus
-
-Start with legally usable datasets (for research/prototyping):
-
-- FMA (various sizes)
-- MTG-Jamendo
-
-Also maintain a private “target catalog” later for AUGE integration.
-
-### 2.2 Windowing
-
-- Sample windows of length 1–3 seconds.
-- Random offsets per epoch.
-- Consider multi-window sampling per track to cover intros/outros.
-
-## 3) Concert degradation augmentations
-
-We create positives by generating a degraded view \(\tilde{x}\) from clean \(x\).
-
-### 3.1 Crowd noise injection
-
-- Mix crowd noise recordings (e.g., FreeSound) at SNR levels in {-10, -5, 0, +5, +10} dB.
-- Use non-stationary segments: chants, claps, whistles.
-
-Implementation: scale noise to target SNR based on RMS or LUFS.
-
-### 3.2 Reverberation via impulse response convolution
-
-- Convolve clean audio with room impulse responses (RIR).
-- Use a distribution of RT60 values (small club to arena).
-
-Tools:
-
-- `pyroomacoustics` (simulation)
-- public RIR datasets (to be curated)
-
-### 3.3 EQ / channel coloration
-
-- Random parametric EQ filters to mimic PA tuning + device mic response.
-- Random low-shelf/high-shelf + peaking filters.
-
-### 3.4 Dynamic range compression / limiting
-
-- Apply compressor with randomized threshold/ratio/attack/release.
-- Add brickwall limiting to simulate mastered live feed.
-
-### 3.5 Mic clipping / saturation
-
-- Hard clipping at randomized thresholds.
-- Soft saturation (tanh / arctan waveshaping) to mimic analog-ish distortion.
-
-### 3.6 Time/frequency perturbations (use cautiously)
-
-- Small time-stretch (±1–2%) and pitch shifts (±10–20 cents) to model drift.
-- Excessive warps can destroy identity; tune with care.
-
-## 4) Objectives
-
-### 4.1 Triplet loss
-
-- Anchor: degraded window
-- Positive: another degraded view of same underlying clean window (or clean version)
-- Negative: different track window
-
-Key: **hard negative mining** improves retrieval quality.
-
-### 4.2 NT-Xent / contrastive loss (SimCLR-style)
-
-- For each clean window, generate two degraded views; treat as positives.
-- Use batch negatives.
-
-Pros: simple; cons: may need large batches.
-
-### 4.3 Supervised contrastive
-
-- Use track ID labels to define positives.
-- Can stabilize training if multiple windows per track per batch.
-
-## 5) Triplet mining strategy (hard negatives)
-
-Hard negatives should be “confusable”:
-
-- same genre
-- similar tempo
-- similar key / harmonic profile
-- similar instrumentation
-
-Implementation ideas:
-
-- precompute simple audio descriptors (tempo, chroma) and sample negatives from nearest neighbors
-- online mining within a batch: choose negatives with highest cosine similarity that are not same track
-
-## 6) Training infrastructure
-
-Recommended stack:
-
-- PyTorch + PyTorch Lightning
-- torchaudio / librosa for I/O and transforms
-- FAISS for evaluation retrieval at scale
-
-Experiment tracking:
-
-- Weights & Biases or MLflow (optional)
-
-## 7) Evaluation
-
-### 7.1 Retrieval metrics
-
-- Top-1 / Top-5 accuracy
-- Mean Reciprocal Rank (MRR)
-
-Evaluate vs SNR:
-
-- -5 dB, 0 dB, +5 dB, +10 dB (and optionally -10 dB)
-
-### 7.2 Streaming recognition metrics
-
-- time-to-first-correct (seconds)
-- false positive rate under noise-only segments
-- stability: number of track flips per minute
-
-### 7.3 Ablations
-
-- with/without enhancement module (RNNoise/Demucs)
-- CNN vs AST
-- effect of each augmentation class
-
-## 8) Practical notes for deployment
-
-- Model export: ONNX → CoreML (iOS)
-- Quantization: int8 where feasible
-- Keep embedding dimension modest (128–256) to reduce index memory.
+Inference is **retrieval**: compute an embedding from the mic stream and match via cosine similarity against a **setlist micro-catalog**.
 
 ---
 
-*Deliverable definition:* A successful Phase-2 model should beat Chromaprint and approach/beat ShazamKit on the simulated concert benchmark at SNR 0 dB and +5 dB, while maintaining usable latency (<5s).
+## 2) Data sources
+
+### 2.1 Clean reference audio
+
+- Studio tracks fetched from Apple Music / YouTube Music, or provided locally
+- Used to build:
+  - simulated degradations
+  - clean anchors/positives for contrastive learning
+
+### 2.2 VEEP concert MP4s (ground-truth real degradation)
+
+Founder access to downloaded concert MP4s (with known setlists) changes the game:
+- These recordings contain the *actual* venue acoustics, PA chain, crowd behavior, and recording device effects.
+
+We should treat VEEP as:
+- primary *domain* data for robustness
+- the gold standard for evaluation
+
+---
+
+## 3) VEEP MP4 pipeline (extract → align → label)
+
+### 3.1 Audio extraction
+
+Use ffmpeg to extract audio:
+
+```bash
+ffmpeg -i concert.mp4 -vn -ac 1 -ar 16000 -c:a pcm_s16le concert.wav
+```
+
+Standardize:
+- mono
+- 16 kHz (or 32 kHz if needed)
+- consistent loudness normalization
+
+### 3.2 Setlist alignment to create labels
+
+Goal: convert a full-concert waveform into labeled segments:
+
+- Input: (concert.wav, setlist order)
+- Output: timestamps for each song (start/end), optionally with confidence
+
+Alignment strategies (in increasing sophistication):
+
+1. **Coarse alignment**
+   - detect long applause/banter gaps
+   - match approximate durations
+
+2. **Audio-to-audio alignment**
+   - embed sliding windows of concert audio
+   - embed clean reference tracks
+   - dynamic programming / Viterbi to align sequence under the setlist constraint
+
+3. **Human-in-the-loop correction**
+   - fast UI to adjust boundaries
+   - store corrected annotations as ground truth
+
+### 3.3 Labeled training pairs
+
+Once aligned, we can create training samples:
+- positive pairs: (clean segment, VEEP segment of same song)
+- also positives: (VEEP segment A, VEEP segment B) from different moments of same song
+- negatives: other songs in the setlist (hard negatives are extremely valuable)
+
+---
+
+## 4) Simulation augmentations (still valuable)
+
+Simulation remains important for:
+- generalization to unseen venues
+- pre-concert reference building (matching expected acoustics)
+
+Augmentations to apply to clean audio:
+- crowd noise mixing (non-stationary)
+- RIR convolution (venue reverb)
+- EQ / channel coloration (PA + phone mic)
+- compression/limiting
+- clipping / saturation
+
+The key difference now:
+- we can **calibrate simulation** using VEEP statistics (RT60 distributions, EQ shapes, typical SNR ranges).
+
+---
+
+## 5) Objectives
+
+Recommended starting point:
+
+- **Supervised contrastive** (track ID) or **NT-Xent** with two views per segment
+- Embedding dimension: 128–256
+- L2-normalized embeddings, cosine similarity
+
+Hard negative mining:
+- within-setlist negatives are naturally hard
+- mine confusable songs (similar tempo/harmony) using embeddings during training
+
+---
+
+## 6) Fine-tuning per venue (optional, high upside)
+
+If we know the venue (or can estimate its RIR characteristics), we can optionally fine-tune:
+
+- **Pre-show adaptation**: a short, lightweight fine-tune pass (or reference embedding regeneration) that incorporates the venue’s RIR/EQ.
+
+This is especially attractive because the catalog is tiny and the timeframe is controlled (pre-concert build).
+
+---
+
+## 7) Data flywheel (AUGE advantage)
+
+Every concert attended by AUGE users can generate more training data:
+
+- Users download setlist → build micro-catalog
+- During the show, the app can store **ephemeral, privacy-preserving** features or short opt-in snippets
+- With setlist ground truth + user confirmations, we obtain labeled examples
+
+Over time:
+- model robustness improves
+- per-venue adaptation becomes stronger
+- the micro-catalog packaging pipeline becomes a defensible system
+
+---
+
+## 8) Deployment constraints (training must respect them)
+
+- Model must convert cleanly: PyTorch → ONNX → CoreML
+- Prefer CoreML-friendly operations
+- Quantization-aware training may be required
+- Evaluate with the full streaming pipeline (temporal consistency) because that is what users experience
