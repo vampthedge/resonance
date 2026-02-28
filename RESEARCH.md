@@ -8,6 +8,20 @@ This document tracks research directions for building a **concert-robust** song 
 
 ---
 
+## FOH Operator Replacement: prior art and novelty
+
+**Current state:** in many concert workflows, a **Front of House (FOH) operator** manually cues show elements (lyrics, lighting, visuals) by watching the stage and triggering events.
+
+**Gap:** while there are many music recognition products and many show-control systems, there is no widely deployed system that **autonomously recognizes live audio against a known setlist** and **triggers real-time lyric synchronization** end-to-end with **no manual cueing**.
+
+**Resonance’s novelty:**
+
+- **Constrained recognition (closed-world):** the setlist defines the candidate set, enabling robust retrieval in a tiny catalog.
+- **Offline CoreML inference:** reliable operation in venues with poor connectivity, low latency, privacy-friendly.
+- **Automatic event triggering:** recognition is directly coupled to lyric-sync events, eliminating the FOH cueing role for lyrics.
+
+---
+
 ## 1) Classical audio fingerprinting (context)
 
 ### 1.1 Shazam / landmark hashing
@@ -81,15 +95,15 @@ Fine-tuning strategy:
 - Replace classifier head with projection head → embedding
 - Train on (clean, degraded) positives and hard negatives from similar music
 
-### 3.3 Training on degraded concert pairs
+### 3.3 Validation under real concert conditions (VEEP)
 
-Most of the gains will come from matching the deployment domain:
+Most of the value comes from matching the deployment domain:
 - crowd noise
 - long RT60
 - PA EQ + compression
 - phone mic distortion
 
-VEEP concert recordings (with known setlists) enable learning invariances from **real** degradation, not just simulation.
+VEEP concert recordings (with known setlists) are a strong **held-out evaluation harness** to measure whether the full system (including temporal gating) holds up under real concert degradation.
 
 ---
 

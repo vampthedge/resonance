@@ -1,8 +1,14 @@
 # resonance
 
-**Robust song recognition for live concerts (crowd noise, reverb, distortion).**
+**Setlist-aware, on-device song recognition for live concerts (crowd noise, reverb, distortion).**
 
-This repository lays the scientific + engineering groundwork for an **AI-powered, embedding-based music recognition system** that is explicitly trained to handle the failure modes of classical audio fingerprinting in real-world concert recordings.
+## Mission: replace the FOH operator
+
+Resonance is a setlist-aware, on-device song recognition engine that replaces the Front of House (FOH) operator in concert settings. By learning from studio recordings and recognizing live audio in real time, it autonomously triggers lyric synchronization for AUGE's Lyrical platform — with zero manual cueing required.
+
+---
+
+This repository lays the scientific + engineering groundwork for an **AI-powered, embedding-based music recognition system** that is explicitly designed to work when classical audio fingerprinting fails in real-world concert recordings.
 
 > Working thesis: **learned audio embeddings trained on concert-degraded audio** (noise/reverb/PA coloration/mic saturation) will outperform **spectral-peak hashing** (e.g., Shazam-style fingerprints) under severe acoustic corruption.
 
@@ -39,7 +45,7 @@ trained with **metric learning** so that:
 - windows from the **same song** (clean, live, different phones, different venues) land **close** in embedding space
 - windows from **different songs** land **far apart**
 
-Key idea: we explicitly generate (or collect) **concert-degraded views** of the same underlying track and train with contrastive objectives (triplet loss / NT-Xent / supervised contrastive).
+Key idea: we explicitly generate **concert-degraded views** of the same underlying track and train with contrastive objectives (triplet loss / NT-Xent / supervised contrastive).
 
 ## High-level system architecture
 At runtime we want <5s recognition even at very low SNR.
@@ -48,7 +54,7 @@ At runtime we want <5s recognition even at very low SNR.
 2. **Denoise / dereverb (optional)**: RNNoise / Demucs / spectral gating
 3. **Feature**: log-mel spectrogram
 4. **Encoder**: CNN or transformer (e.g., EfficientNet-style convnet, AST)
-5. **Index**: FAISS ANN search over reference embeddings
+5. **Index**: fast cosine similarity search over reference embeddings (micro-catalog)
 6. **Decision**: similarity + temporal consistency across overlapping windows
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for a concrete proposal.
@@ -57,10 +63,11 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a concrete proposal.
 This is intentionally staged to avoid premature modeling.
 
 - **Phase 0 — Baseline**: quantify failure of ShazamKit / ACRCloud / Chromaprint on simulated concert audio.
-- **Phase 1 — Data pipeline**: build reproducible concert-degradation simulator (noise, RIR, saturation, compression).
+- **Phase 1 — Data pipeline**: build studio-recording ingestion + reproducible concert-degradation simulator (noise, RIR, saturation, compression).
+- **Phase 1b — VEEP validation benchmark**: evaluate on real concert MP4s (held-out test harness; not training data).
 - **Phase 2 — First model**: train a small CNN embedding model; establish robust evaluation.
 - **Phase 3 — Iterate**: stronger augmentations, transformer encoder, hard-negative mining.
-- **Phase 4 — Retrieval + latency**: FAISS index + streaming inference + temporal aggregation.
+- **Phase 4 — Retrieval + latency**: streaming inference + temporal aggregation.
 - **Phase 5 — Field tests**: real concerts; measure recognition latency and top-1 under uncontrolled conditions.
 - **Phase 6 — Productization**: integrate into AUGE iOS app (on-device or hybrid).
 

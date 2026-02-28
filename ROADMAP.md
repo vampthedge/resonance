@@ -4,7 +4,8 @@ This roadmap reflects the current product architecture:
 
 - **On-device, offline iOS (CoreML)**
 - **Setlist-based micro-catalog** (20–50 tracks)
-- **VEEP concert MP4s** as real degraded ground truth
+- **Studio recordings** as the learning source (clean, isolated)
+- **VEEP concert MP4s** as a validation benchmark (test harness only)
 
 ---
 
@@ -24,24 +25,39 @@ This roadmap reflects the current product architecture:
 
 ---
 
-## Phase 1 — VEEP pipeline (extract + label concert audio)
+## Phase 1 — Studio recording ingestion pipeline (pre-concert build foundation)
 
-**Goal:** turn concert MP4 downloads into labeled training/eval data.
+**Goal:** make “setlist → studio audio → embeddings → micro-catalog” reproducible.
 
-- ffmpeg extraction to standardized WAV
-- setlist alignment to get song timestamps
-- human-in-the-loop tool to correct boundaries
+- setlist ingestion
+- studio audio acquisition (Apple Music / clean sources) + normalization
+- windowing (e.g., 3s with overlap)
+- reference embedding generation
+- micro-catalog packaging format spec (target: **<10MB**)
 
 **Deliverables**
-- `veep/` pipeline scripts
-- labeled dataset format + examples
-- first VEEP-based evaluation suite
+- studio ingestion + reference embedding builder scripts
+- micro-catalog format + example “concert pack”
 
 ---
 
-## Phase 2 — Train embedding model on clean vs VEEP-degraded pairs
+## Phase 1b — VEEP-based validation benchmark
 
-**Goal:** learn invariances from real degradation.
+**Goal:** evaluate under real concert conditions (crowd noise, reverb, distortion) without using VEEP as training data.
+
+- ffmpeg extraction to standardized WAV
+- known-setlist evaluation harness
+- metrics: accuracy, time-to-recognition, stability
+
+**Deliverables**
+- `veep_eval/` scripts + reporting
+- first VEEP benchmark results
+
+---
+
+## Phase 2 — Train embedding model on studio + simulated concert degradations
+
+**Goal:** learn invariances from augmentation applied to studio tracks.
 
 - start from pretrained backbone (PANNs/OpenL3/MusiCNN)
 - train with contrastive objective
@@ -49,7 +65,7 @@ This roadmap reflects the current product architecture:
 
 **Deliverables**
 - training code + checkpoints
-- retrieval metrics on VEEP holdout concerts
+- retrieval metrics on simulated degradations + VEEP benchmark (held-out)
 
 ---
 
@@ -68,20 +84,17 @@ This roadmap reflects the current product architecture:
 
 ---
 
-## Phase 4 — Pre-concert pipeline (setlist → micro-catalog → CoreML package)
+## Phase 4 — At-concert automation + lyric-sync triggering
 
-**Goal:** generate a small offline “concert pack”.
+**Goal:** complete the FOH replacement loop.
 
-- setlist ingestion
-- clean audio fetch + normalization
-- optional acoustic simulation (RIR/EQ)
-- reference embedding generation
-- micro-index packaging (SQLite/flat) + signing
+- integrate temporal consistency gate (2/3)
+- expose “matched song + confidence” events
+- automatically trigger lyric sync events in Lyrical (no manual cueing)
 
 **Deliverables**
-- micro-catalog builder tool
-- concert pack format spec
-- end-to-end demo: build pack → run offline recognition
+- end-to-end demo: mic → recognition → lyric sync trigger
+- tuning guide for thresholds and anti-flicker
 
 ---
 
@@ -91,7 +104,7 @@ This roadmap reflects the current product architecture:
 
 - run with known setlist
 - measure recognition stability and time-to-recognition
-- capture failure modes for next training iteration
+- capture failure modes for next iteration
 
 **Deliverables**
 - field test report + error analysis
@@ -99,12 +112,11 @@ This roadmap reflects the current product architecture:
 
 ---
 
-## Phase 6 — AUGE iOS integration (replace ShazamKit with Resonance)
+## Phase 6 — AUGE iOS integration
 
 **Goal:** ship inside the AUGE app.
 
-- replace ShazamKit flow
-- implement setlist download + concert pack distribution
+- setlist download + concert pack distribution
 - privacy model (on-device first; optional opt-in data collection)
 
 **Deliverables**

@@ -4,11 +4,31 @@ This document describes the key intellectual property components of Resonance: a
 
 The goal is not just “a good embedding model.” The goal is an end-to-end system that:
 - achieves high accuracy in real concert conditions, and
-- is difficult to replicate without the same architecture + data + tooling.
+- is difficult to replicate without the same architecture + tooling.
 
 ---
 
-## 1) Pre-concert acoustic simulation pipeline
+## 1) Autonomous FOH replacement system
+
+**What it is**
+
+**Autonomous FOH replacement system**: the integration of setlist-constrained recognition + automatic lyric sync triggering constitutes a novel automated concert production system.
+
+**Why it’s novel / defensible**
+
+- Replaces a human FOH lyric-cueing workflow with an end-to-end automated loop.
+- Recognition is not an isolated feature; it directly drives real-time show output (lyric sync).
+- The closed-world setlist constraint makes the system practical, reliable, and offline.
+
+**What a competitor would need to replicate**
+
+- the setlist-to-micro-catalog pipeline
+- reliable offline streaming recognition
+- robust event triggering integrated into lyric rendering (product + systems)
+
+---
+
+## 2) Pre-concert acoustic simulation pipeline
 
 **What it is**
 
@@ -18,7 +38,7 @@ A pre-show process that takes clean reference audio and generates **concert-like
 - compression/limiting
 - mild clipping/saturation and other nonlinearities
 
-These simulated views are embedded and included in the micro-catalog as additional reference points.
+These simulated views can be embedded and included in the micro-catalog as additional reference points.
 
 **Why it’s novel / defensible**
 
@@ -26,7 +46,7 @@ Most recognition systems either:
 - rely on global fingerprints (not venue-adaptive), or
 - do domain augmentation during training only.
 
-Resonance uses simulation *as part of the deployment pipeline* to better match the expected concert channel at inference time.
+Resonance uses simulation as part of a show-specific pipeline to better match the expected concert channel at inference time.
 
 **What a competitor would need to replicate**
 
@@ -36,7 +56,7 @@ Resonance uses simulation *as part of the deployment pipeline* to better match t
 
 ---
 
-## 2) Setlist-constrained micro-catalog architecture
+## 3) Setlist-constrained micro-catalog architecture
 
 **What it is**
 
@@ -59,7 +79,7 @@ It is a product + systems insight, not just an ML tweak.
 
 ---
 
-## 3) CoreML packaged embedding model + index format
+## 4) CoreML packaged embedding model + index format
 
 **What it is**
 
@@ -87,34 +107,32 @@ Competitors can build models, but the practical edge comes from shipping a robus
 
 ---
 
-## 4) VEEP-derived training dataset and labeling methodology
+## 5) VEEP-based validation benchmark (test harness, not training data)
 
 **What it is**
 
-A proprietary dataset of real concert recordings (MP4s) with known setlists, converted into:
-- standardized audio
-- aligned timestamps per song
-- labeled segments for training and evaluation
+A proprietary benchmark harness built on downloaded concert MP4s (with known setlists) to measure real-world performance:
+- standardized audio extraction
+- reproducible evaluation scripts
+- accuracy/latency/stability metrics under true venue acoustics
 
 **Why it’s novel / defensible**
 
-Real concert degradation is hard to capture and label at scale.
-VEEP gives access to:
-- true venue acoustics and PA behavior
-- realistic crowd noise and dynamics
-- real recording device artifacts
-
-The labeling methodology (setlist-constrained alignment + human correction) creates high-quality supervised data.
+Real concert degradation is hard to capture and evaluate consistently.
+A strong test harness helps:
+- prevent regressions
+- tune temporal gating thresholds
+- validate robustness across venues/devices
 
 **What a competitor would need to replicate**
 
 - similar access to large volumes of concert recordings with ground truth
-- the alignment tooling and annotation workflow
-- legal/operational ability to curate and maintain such a dataset
+- the evaluation harness and reporting pipeline
+- legal/operational ability to curate and maintain such a benchmark
 
 ---
 
-## 5) Temporal consistency matching algorithm
+## 6) Temporal consistency matching algorithm
 
 **What it is**
 
@@ -139,39 +157,15 @@ Temporal consistency is a simple but powerful systems component that:
 
 ---
 
-## 6) Data flywheel (user concerts as training signal)
-
-**What it is**
-
-A feedback loop where each real concert usage can produce additional labeled training data:
-- setlist provides a strong prior and weak supervision
-- user confirmations + telemetry (privacy-preserving) refine labels
-- model and simulation parameters improve over time
-
-**Why it’s novel / defensible**
-
-Global fingerprinting systems optimize for scale, but they don’t get rich supervision from setlist-constrained, per-event usage.
-Resonance can improve rapidly because:
-- each event is a “mini dataset” with clear candidate set
-- per-venue patterns can be learned and reused
-
-**What a competitor would need to replicate**
-
-- product distribution and user base attending concerts
-- privacy-safe data collection and labeling mechanisms
-- infrastructure to continuously retrain, validate, and ship updated packs
-
----
-
 ## Bottom line
 
 The defensible advantage is the combination of:
 
 - **problem reframing** (setlist micro-catalog)
-- **real domain data** (VEEP)
 - **pre-concert adaptation** (acoustic simulation)
 - **offline deployability** (CoreML packaging + index format)
 - **streaming stability** (temporal consistency)
-- **continuous improvement loop** (data flywheel)
+- **autonomous FOH replacement** (recognition → automatic lyric-sync events)
+- **realistic validation** (VEEP benchmark harness)
 
-A competitor can copy individual ideas, but replicating the full system requires rebuilding the data + tooling + deployment pipeline end-to-end.
+A competitor can copy individual ideas, but replicating the full system requires rebuilding the tooling + deployment pipeline end-to-end.
