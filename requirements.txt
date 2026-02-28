@@ -1,0 +1,9 @@
+torch
+torchaudio
+librosa
+faiss-cpu
+pyroomacoustics
+soundfile
+numpy
+lightning
+scipy

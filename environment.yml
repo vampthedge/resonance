@@ -1,0 +1,17 @@
+name: resonance
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - python>=3.10
+  - numpy
+  - scipy
+  - soundfile
+  - librosa
+  - pytorch
+  - torchaudio
+  - faiss-cpu
+  - pyroomacoustics
+  - pip
+  - pip:
+      - lightning
